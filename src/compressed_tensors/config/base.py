@@ -30,7 +30,6 @@ class CompressionFormat(str, Enum):
     nvfp4_pack_quantized = "nvfp4-pack-quantized"
     mxfp4_pack_quantized = "mxfp4-pack-quantized"
     mxfp8_quantized = "mxfp8-quantized"
-    expert_sparsity = "expert-sparsity"
 
 
 @unique
