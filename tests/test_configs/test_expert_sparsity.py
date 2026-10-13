@@ -2,18 +2,18 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
-from compressed_tensors.config import ExpertSparsityConfig, MoEMethod
+from compressed_tensors.config import ExpertSparsityConfig, MoESparsityMethod
 from pydantic import ValidationError
 
 
 def test_moe_method_values():
-    assert MoEMethod("prune") == MoEMethod.PRUNE
-    assert MoEMethod("novice") == MoEMethod.NOVICE
+    assert MoESparsityMethod("prune") == MoESparsityMethod.PRUNE
+    assert MoESparsityMethod("novice") == MoESparsityMethod.NOVICE
 
 
 def test_moe_method_invalid():
     with pytest.raises(ValueError):
-        MoEMethod("invalid")
+        MoESparsityMethod("invalid")
 
 
 @pytest.mark.parametrize("method", ["prune", "novice"])
@@ -22,16 +22,16 @@ def test_expert_sparsity_basic(method):
         method=method,
         num_experts=[None, None, 129, 253, 128, 128],
     )
-    assert cfg.method == MoEMethod(method)
+    assert cfg.method == MoESparsityMethod(method)
     assert cfg.num_experts == [None, None, 129, 253, 128, 128]
 
 
 def test_expert_sparsity_accepts_enum_method():
     cfg = ExpertSparsityConfig(
-        method=MoEMethod.PRUNE,
+        method=MoESparsityMethod.PRUNE,
         num_experts=[None, 128],
     )
-    assert cfg.method == MoEMethod.PRUNE
+    assert cfg.method == MoESparsityMethod.PRUNE
 
 
 def test_expert_sparsity_json_roundtrip():
@@ -44,7 +44,7 @@ def test_expert_sparsity_json_roundtrip():
     assert dumped["num_experts"] == [None, 129, 253, 128]
 
     restored = ExpertSparsityConfig.model_validate(dumped)
-    assert restored.method == MoEMethod.NOVICE
+    assert restored.method == MoESparsityMethod.NOVICE
     assert restored.num_experts == [None, 129, 253, 128]
 
 

@@ -3,7 +3,7 @@
 
 from typing import List, Optional
 
-from compressed_tensors.config import MoEMethod
+from compressed_tensors.config import MoESparsityMethod
 from pydantic import BaseModel, StrictInt
 
 
@@ -46,11 +46,11 @@ class ExpertSparsityConfig(BaseModel):
         }
 
     :param method: method used to induce expert sparsity, one of
-        :class:`MoEMethod` ("prune" or "novice")
+        :class:`MoESparsityMethod` ("prune" or "novice")
     :param num_experts: per-layer retained expert counts. ``None`` entries
         denote dense layers; integer entries denote the number of experts in
         that MoE layer
     """
 
-    method: MoEMethod
+    method: MoESparsityMethod
     num_experts: List[Optional[StrictInt]]

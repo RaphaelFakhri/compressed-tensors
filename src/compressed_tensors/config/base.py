@@ -12,7 +12,7 @@ __all__ = [
     "SparsityCompressionConfig",
     "CompressionFormat",
     "SparsityStructure",
-    "MoEMethod",
+    "MoESparsityMethod",
 ]
 
 
@@ -33,27 +33,12 @@ class CompressionFormat(str, Enum):
 
 
 @unique
-class MoEMethod(str, Enum):
+class MoESparsityMethod(str, Enum):
     """
-    An enumeration of methods for inducing expert sparsity in a
-    Mixture-of-Experts (MoE) model.
+    Methods for inducing MoE expert sparsity.
 
-    Attributes
-    ----------
-    PRUNE : str
-        Experts are pruned (e.g. REAP). Retained experts are left-shifted in the
-        checkpoint and the remaining experts are dropped entirely.
-    NOVICE : str
-        Experts are collapsed into fewer "novice" experts (e.g. MoNe). Retained
-        experts are left-shifted and novices remain as a single tensor.
-
-    Examples
-    --------
-    >>> MoEMethod("prune") == MoEMethod.PRUNE
-    True
-
-    >>> MoEMethod("novice") == MoEMethod.NOVICE
-    True
+    :cvar PRUNE: prune experts entirely (e.g. REAP)
+    :cvar NOVICE: collapse experts into fewer novices (e.g. MoNe)
     """
 
     PRUNE = "prune"
