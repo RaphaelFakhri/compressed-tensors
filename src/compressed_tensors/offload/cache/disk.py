@@ -98,9 +98,11 @@ class DiskCache(OffloadCache):
         """
         Onload a tensor from disk/meta to device.
 
-        Pinned tensors staged from disk are copied to an accelerator with
-        ``non_blocking=True``. The copy is enqueued on the current accelerator
-        stream, so subsequent work on that stream sees the completed parameter.
+        Staged CPU tensors are copied to an accelerator with
+        ``non_blocking=True``, whether the source is pinned or pageable. Pinning can
+        improve transfer bandwidth, but is not required to avoid synchronizing the
+        host after each copy. Copies are enqueued on the current accelerator stream,
+        so subsequent work on that stream sees the completed parameter.
 
         :param offloaded: meta tensor or staged CPU tensor to onload
         :return: device tensor, read from disk
@@ -113,7 +115,6 @@ class DiskCache(OffloadCache):
         if self.is_staged:
             non_blocking = (
                 offloaded.device.type == "cpu"
-                and offloaded.is_pinned()
                 and is_accelerator_type(torch.device(self.onload_device).type)
             )
             onloaded = send_tensors(

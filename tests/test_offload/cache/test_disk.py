@@ -154,11 +154,9 @@ def test_stage(tmp_path):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "pinned, expected_non_blocking", [(False, False), (True, True)]
-)
-def test_staged_onload_uses_non_blocking_for_pinned_cpu(
-    tmp_path, monkeypatch, pinned, expected_non_blocking
+@pytest.mark.parametrize("pinned", [False, True])
+def test_staged_onload_uses_non_blocking_for_cpu(
+    tmp_path, monkeypatch, pinned
 ):
     class PinnedTensor(torch.Tensor):
         @staticmethod
@@ -184,7 +182,7 @@ def test_staged_onload_uses_non_blocking_for_pinned_cpu(
 
     cache.onload(tensor)
 
-    assert calls[0]["non_blocking"] is expected_non_blocking
+    assert calls[0]["non_blocking"] is True
 
 
 @pytest.mark.unit
