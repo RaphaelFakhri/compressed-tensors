@@ -154,6 +154,40 @@ def test_stage(tmp_path):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "pinned, expected_non_blocking", [(False, False), (True, True)]
+)
+def test_staged_onload_uses_non_blocking_for_pinned_cpu(
+    tmp_path, monkeypatch, pinned, expected_non_blocking
+):
+    class PinnedTensor(torch.Tensor):
+        @staticmethod
+        def __new__(cls, data):
+            return torch.Tensor._make_subclass(cls, data, False)
+
+        def is_pinned(self):
+            return True
+
+    cache = DiskCache("cuda:0", offload_dir=str(tmp_path))
+    cache.is_staged = True
+    tensor = torch.ones(4)
+    if pinned:
+        tensor = PinnedTensor(tensor)
+
+    calls = []
+    monkeypatch.setattr(disk_cache, "is_accelerator_type", lambda _: True)
+    monkeypatch.setattr(
+        disk_cache,
+        "send_tensors",
+        lambda value, **kwargs: calls.append(kwargs) or value,
+    )
+
+    cache.onload(tensor)
+
+    assert calls[0]["non_blocking"] is expected_non_blocking
+
+
+@pytest.mark.unit
 def test_staged_onload_preserves_parameter_type(tmp_path):
     offload_dir = tmp_path / "offload_dir"
     offload_dir.mkdir()

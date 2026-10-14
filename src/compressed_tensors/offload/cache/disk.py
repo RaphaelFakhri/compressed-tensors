@@ -96,9 +96,13 @@ class DiskCache(OffloadCache):
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
-        Onload a tensor from disk/meta to device
+        Onload a tensor from disk/meta to device.
 
-        :param offloaded: meta tensor to onload
+        Pinned tensors staged from disk are copied to an accelerator with
+        ``non_blocking=True``. The copy is enqueued on the current accelerator
+        stream, so subsequent work on that stream sees the completed parameter.
+
+        :param offloaded: meta tensor or staged CPU tensor to onload
         :return: device tensor, read from disk
         """
         if offloaded is None:
@@ -107,7 +111,17 @@ class DiskCache(OffloadCache):
         device = _get_safe_open_device(self.onload_device)
 
         if self.is_staged:
-            onloaded = send_tensors(offloaded, device=device, copy=False)
+            non_blocking = (
+                offloaded.device.type == "cpu"
+                and offloaded.is_pinned()
+                and is_accelerator_type(torch.device(self.onload_device).type)
+            )
+            onloaded = send_tensors(
+                offloaded,
+                device=device,
+                copy=False,
+                non_blocking=non_blocking,
+            )
         else:
             weight_info = self.index[offloaded]
             onloaded = load_disk_tensor_from_offload(
