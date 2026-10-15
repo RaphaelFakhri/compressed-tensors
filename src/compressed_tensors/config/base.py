@@ -38,7 +38,7 @@ class MoESparsityMethod(str, Enum):
     Methods for inducing MoE expert sparsity.
 
     :cvar PRUNE: prune experts entirely (e.g. REAP)
-    :cvar NOVICE: collapse experts into fewer novices (e.g. MoNe)
+    :cvar NOVICE: replace experts with constant novices (e.g. MoNe)
     """
 
     PRUNE = "prune"
