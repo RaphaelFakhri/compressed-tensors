@@ -193,14 +193,14 @@ def test_pack_quantized_forward_actorder_eager():
 
 
 @pytest.mark.parametrize("scheme_name", ["W8A8", "FP8_DYNAMIC"])
-def test_other_formats_keep_forward(scheme_name):
+def test_other_formats_get_compressed_forward(scheme_name):
     module = torch.nn.Linear(256, 128, bias=False, dtype=torch.bfloat16)
     initialize_module_for_quantization(
         module, preset_name_to_scheme(scheme_name, ["Linear"])
     )
     quantized_forward_func = module.forward.__func__
     compress_module(module)
-    assert module.forward.__func__ is quantized_forward_func
+    assert module.forward.__func__ is not quantized_forward_func
 
 
 def test_embedding_keeps_forward():

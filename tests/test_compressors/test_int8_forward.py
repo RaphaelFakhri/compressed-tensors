@@ -257,11 +257,11 @@ def test_int8_forward_embedding_keeps_forward():
 
 @requires_gpu
 @pytest.mark.parametrize("scheme_name", ["FP8_DYNAMIC", "W4A16"])
-def test_other_formats_keep_forward(scheme_name):
+def test_other_formats_get_compressed_forward(scheme_name):
     module = torch.nn.Linear(256, 128, bias=False, dtype=torch.bfloat16, device="cuda")
     initialize_module_for_quantization(
         module, preset_name_to_scheme(scheme_name, ["Linear"])
     )
     quantized_forward_func = module.forward.__func__
     compress_module(module)
-    assert module.forward.__func__ is quantized_forward_func
+    assert module.forward.__func__ is not quantized_forward_func
