@@ -78,6 +78,26 @@ def test_correctness_embedding(type, randomize, embed_loc, linear_loc):
     assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
 
 
+def test_apply_transform_config_respects_module_scope():
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4, bias=False),
+        torch.nn.Linear(4, 4, bias=False),
+    )
+    config = TransformConfig(
+        config_groups={
+            "input": TransformScheme(
+                type="hadamard",
+                apply=[TransformArgs(targets="Linear", location="input")],
+            )
+        }
+    )
+
+    apply_transform_config(model, config, modules=[model[0]])
+
+    assert "input_input" in model[0]._modules
+    assert "input_input" not in model[1]._modules
+
+
 @requires_gpu
 @pytest.mark.parametrize("type", ("hadamard", "random-hadamard", "random-matrix"))
 @pytest.mark.parametrize("randomize", (True, False))

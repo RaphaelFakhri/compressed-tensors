@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections import OrderedDict
+from collections.abc import Iterable
 from copy import deepcopy
 
 import torch
@@ -102,6 +103,7 @@ def apply_quantization_config(
     config: QuantizationConfig | None,
     run_compressed: bool = False,
     show_progress: bool = True,
+    modules: Iterable[Module] | None = None,
 ):
     """
     Initializes the model for quantization in-place based on the given config.
@@ -112,6 +114,7 @@ def apply_quantization_config(
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
     :param show_progress: Whether to show progress bar during quantization
+    :param modules: optional module scope to restrict quantization setup to
     """
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -124,7 +127,7 @@ def apply_quantization_config(
     # apply and initialize kv cache quantization
     if config.kv_cache_scheme is not None:
         _apply_kv_cache_scheme(
-            model, config.kv_cache_scheme, config.quantization_status
+            model, config.kv_cache_scheme, config.quantization_status, modules=modules
         )
 
     # build mapping of targets to schemes for easier matching
@@ -136,7 +139,13 @@ def apply_quantization_config(
 
     # mark appropriate layers for quantization by setting their quantization schemes
     matched_modules = list(
-        match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
+        match_named_modules(
+            model,
+            target_to_scheme,
+            config.ignore,
+            warn_on_fail=modules is None,
+            modules=modules,
+        )
     )
 
     for name, module in tqdm(
@@ -173,6 +182,7 @@ def _apply_kv_cache_scheme(
     model: torch.nn.Module,
     kv_cache_scheme: QuantizationArgs,
     status: QuantizationStatus,
+    modules: Iterable[Module] | None = None,
 ):
     if not kv_cache_scheme.symmetric:
         logger.warning("vLLM does not support asymmetric kv cache quantization")
@@ -184,7 +194,7 @@ def _apply_kv_cache_scheme(
         targets=KV_CACHE_TARGETS.copy(),  # is never read in practice
         input_activations=kv_cache_scheme,
     )
-    for submodule in model.modules():
+    for submodule in model.modules() if modules is None else modules:
         if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)

@@ -37,6 +37,7 @@ def match_named_modules(
     ignore: Iterable[str] | None = None,
     fused: FusedMappping | None = None,
     warn_on_fail: bool = False,
+    modules: Iterable[torch.nn.Module] | None = None,
 ) -> Generator[tuple[str, torch.nn.Module], None, None]:
     """
     Yields names and modules which match `targets` but do not match `ignore`.
@@ -48,14 +49,18 @@ def match_named_modules(
     :fused: optional mapping from suffixes of fused modules to the suffixes of their
         corresponding shards. See `compressed_tensors.utils.match.is_match`
     :param warn_on_fail: if True, warns if any targets do not match any modules in model
+    :param modules: optional module scope to restrict matching to
     :return: generator of module names and modules
     """
     targets = targets or []
     ignore = ignore or []
 
     unmatched_targets = set(targets)
+    module_scope = None if modules is None else set(modules)
 
     for name, module in model.named_modules():
+        if module_scope is not None and module not in module_scope:
+            continue
         for target in targets:
             if is_match(name, module, target, fused=fused):
                 unmatched_targets -= {target}

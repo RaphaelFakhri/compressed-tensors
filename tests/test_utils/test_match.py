@@ -246,6 +246,14 @@ class TestMatchNamedModules:
         assert "layer1" in names
         assert "layer2" in names
 
+    def test_module_scope_preserves_full_names(self):
+        model = DummyModel()
+        scope = [model.layer2]
+
+        matches = list(match_named_modules(model, ["Linear"], modules=scope))
+
+        assert matches == [("layer2", model.layer2)]
+
     def test_class_module_match(self):
         """Test matching modules by class name"""
         model = DummyModel()

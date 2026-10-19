@@ -109,6 +109,28 @@ def test_target_prioritization(mock_frozen):
             assert module.quantization_scheme.weights.num_bits == 8
 
 
+def test_apply_quantization_config_restricts_module_scope():
+    model = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4))
+    config = QuantizationConfig(
+        config_groups={
+            "group": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=8,
+                    type=QuantizationType.INT,
+                    symmetric=True,
+                    strategy=QuantizationStrategy.TENSOR,
+                ),
+            )
+        }
+    )
+
+    apply_quantization_config(model, config, modules=[model[0]])
+
+    assert model[0].quantization_scheme is not None
+    assert not hasattr(model[1], "quantization_scheme")
+
+
 def test_apply_quantization_config_tinyllama():
     quant_config = get_sample_tinyllama_quant_config(
         status=QuantizationStatus.INITIALIZED
