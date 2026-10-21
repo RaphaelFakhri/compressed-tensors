@@ -230,6 +230,54 @@ def test_process_3d(mock_3d_checkpoint):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "router_module,bias_name",
+    [
+        ("mlp.router", "bias"),  # gpt-oss
+        ("mlp.gate", "e_score_correction_bias"),  # deepseek-v3, glm4-moe
+    ],
+)
+def test_process_prunes_router_bias(tmp_path, router_module, bias_name):
+    """
+    Per-expert tensors stored next to the router weight must be pruned with it,
+    otherwise the checkpoint no longer matches the pruned expert count.
+    """
+    num_experts = 4
+    hidden = 8
+
+    router_weight = torch.zeros(num_experts, hidden)
+    router_weight[0] = torch.ones(hidden) * 10.0
+    router_weight[1] = torch.ones(hidden) * 1.0
+    router_weight[2] = torch.ones(hidden) * 5.0
+    router_weight[3] = torch.ones(hidden) * 8.0
+
+    router_name = f"model.layers.0.{router_module}.weight"
+    bias_full_name = f"model.layers.0.{router_module}.{bias_name}"
+    tensors = {
+        router_name: router_weight,
+        bias_full_name: torch.arange(num_experts, dtype=torch.float32),
+        "model.layers.0.mlp.experts.gate_proj.weight": torch.randn(
+            num_experts, 16, hidden
+        ),
+    }
+    save_file(tensors, str(tmp_path / "model.safetensors"))
+    with open(tmp_path / "config.json", "w") as f:
+        json.dump({"num_local_experts": num_experts, "model_type": "test"}, f)
+
+    converter = MagnitudeExpertPruner.from_pretrained(
+        model_name_or_path=str(tmp_path),
+        router_pattern=r"\.(router|gate)\.weight$",
+        expert_pattern=r"\.experts\.\w+\.weight$",
+        sparsity=0.5,
+    )
+    result = converter.process(dict(tensors))
+
+    assert converter.retained_experts[router_name] == [0, 3]
+    assert result[router_name].shape[0] == 2
+    assert torch.equal(result[bias_full_name], torch.tensor([0.0, 3.0]))
+
+
+@pytest.mark.unit
 def test_update_model_config(mock_2d_checkpoint):
     converter = MagnitudeExpertPruner.from_pretrained(
         model_name_or_path=str(mock_2d_checkpoint),

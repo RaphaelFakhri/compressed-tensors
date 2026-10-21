@@ -54,6 +54,10 @@ class MagnitudeExpertPruner(Converter):
     :param expert_indices: for 2D experts, mapping of tensor name -> expert
         index. Empty for 3D experts.
     :param is_3d: whether expert weights are 3D stacked tensors
+    :param router_siblings: mapping of tensor name -> router tensor name for
+        per-expert tensors stored next to the router weight, such as
+        ``router.bias`` or ``gate.e_score_correction_bias``. Built by
+        :meth:`from_pretrained`.
     """
 
     def __init__(
@@ -67,6 +71,7 @@ class MagnitudeExpertPruner(Converter):
         expert_indices: dict[str, int],
         is_3d: bool,
         num_experts_per_tok: int | None = None,
+        router_siblings: dict[str, str] | None = None,
     ):
         self.router_pattern = re.compile(router_pattern)
         self.expert_pattern = re.compile(expert_pattern)
@@ -77,6 +82,7 @@ class MagnitudeExpertPruner(Converter):
         self.expert_indices = expert_indices
         self.is_3d = is_3d
         self.num_experts_per_tok = num_experts_per_tok
+        self.router_siblings = router_siblings or {}
 
     @classmethod
     def from_pretrained(
@@ -125,6 +131,10 @@ class MagnitudeExpertPruner(Converter):
         # dot-separated prefix
         expert_to_router = build_expert_to_router_map(expert_names, router_names)
 
+        # per-expert tensors next to the router weight (e.g. router bias) must be
+        # pruned with it
+        router_siblings = _find_router_siblings(router_names, weight_map, expert_re)
+
         # detect 2D vs 3D and extract expert indices for 2D
         expert_indices, is_3d = _detect_moe_layout(
             expert_names, weight_map, model_files
@@ -157,6 +167,7 @@ class MagnitudeExpertPruner(Converter):
             expert_indices=expert_indices,
             is_3d=is_3d,
             num_experts_per_tok=num_experts_per_tok,
+            router_siblings=router_siblings,
         )
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -165,8 +176,9 @@ class MagnitudeExpertPruner(Converter):
         for name in list(tensors):
             tensor = tensors[name]
 
-            if self.router_pattern.search(name):
-                retained = self.retained_experts[name]
+            if self.router_pattern.search(name) or name in self.router_siblings:
+                router_name = self.router_siblings.get(name, name)
+                retained = self.retained_experts[router_name]
                 idx = torch.tensor(retained, dtype=torch.long)
                 result[name] = tensor[idx].contiguous()
 
@@ -255,6 +267,30 @@ def _set_nested_key(config_data: dict, key: str, value: int):
     else:
         config_data[key] = value
         logger.info(f"config.json: added {key} = {value}")
+
+
+def _find_router_siblings(
+    router_names: list[str],
+    weight_map: dict[str, str],
+    expert_re: re.Pattern,
+) -> dict[str, str]:
+    """
+    Find tensors that belong to the same module as a router weight, such as
+    ``mlp.router.bias`` or ``mlp.gate.e_score_correction_bias``. These hold one
+    entry per expert, so they are pruned along with the router.
+
+    Returns a mapping of sibling tensor name -> router tensor name.
+    """
+    router_set = set(router_names)
+    module_to_router = {rname.rpartition(".")[0]: rname for rname in router_names}
+    siblings: dict[str, str] = {}
+    for name in weight_map:
+        rname = module_to_router.get(name.rpartition(".")[0])
+        if rname is None or name in router_set or expert_re.search(name):
+            continue
+        siblings[name] = rname
+
+    return siblings
 
 
 def _detect_moe_layout(
