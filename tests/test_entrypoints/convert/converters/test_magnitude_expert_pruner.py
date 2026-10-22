@@ -270,11 +270,25 @@ def test_process_prunes_router_bias(tmp_path, router_module, bias_name):
         expert_pattern=r"\.experts\.\w+\.weight$",
         sparsity=0.5,
     )
-    result = converter.process(dict(tensors))
+    result = converter.validate(dict(tensors))
 
     assert converter.retained_experts[router_name] == [0, 3]
+    assert converter.aux_to_router == {bias_full_name: router_name}
     assert result[router_name].shape[0] == 2
     assert torch.equal(result[bias_full_name], torch.tensor([0.0, 3.0]))
+
+    # aux_pattern=None leaves per-expert router vectors untouched
+    converter = MagnitudeExpertPruner.from_pretrained(
+        model_name_or_path=str(tmp_path),
+        router_pattern=r"\.(router|gate)\.weight$",
+        expert_pattern=r"\.experts\.\w+\.weight$",
+        sparsity=0.5,
+        aux_pattern=None,
+    )
+    result = converter.process(dict(tensors))
+
+    assert converter.aux_to_router == {}
+    assert torch.equal(result[bias_full_name], tensors[bias_full_name])
 
 
 @pytest.mark.unit

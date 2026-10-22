@@ -27,6 +27,10 @@ from safetensors import safe_open
 
 __all__ = ["MagnitudeExpertPruner"]
 
+# per-expert router vectors: gpt-oss ``mlp.router.bias``, DeepSeek-V3 and
+# GLM-4-MoE ``mlp.gate.e_score_correction_bias``, DeepSeek ``ffn.gate.bias``
+AUX_PATTERN = r"(?:mlp|ffn)\.(?:gate|router)\.(?:bias|e_score_correction_bias)$"
+
 
 class MagnitudeExpertPruner(Converter):
     """
@@ -41,7 +45,11 @@ class MagnitudeExpertPruner(Converter):
     ``[num_experts, out_features, in_features]``).
 
     Pruning removes expert weight tensors (or slices stacked tensors), adjusts
-    router weights, and updates the model config's expert count.
+    router weights, and updates the model config's expert count. Per-expert
+    router vectors matched by ``aux_pattern``, such as gpt-oss's
+    ``mlp.router.bias`` or DeepSeek-V3's ``mlp.gate.e_score_correction_bias``
+    with shape ``[num_experts]``, are sliced along dim 0 by the retained expert
+    indices, exactly like the router weight's rows.
 
     :param router_pattern: regex matching router weight tensor names
     :param expert_pattern: regex matching expert weight tensor names
@@ -54,10 +62,11 @@ class MagnitudeExpertPruner(Converter):
     :param expert_indices: for 2D experts, mapping of tensor name -> expert
         index. Empty for 3D experts.
     :param is_3d: whether expert weights are 3D stacked tensors
-    :param router_siblings: mapping of tensor name -> router tensor name for
-        per-expert tensors stored next to the router weight, such as
-        ``router.bias`` or ``gate.e_score_correction_bias``. Built by
-        :meth:`from_pretrained`.
+    :param aux_pattern: regex matching per-expert router vectors (e.g. routing
+        bias) that must be sliced along dim 0 by retained expert indices.
+        ``None`` disables auxiliary-vector pruning
+    :param aux_to_router: mapping of auxiliary tensor name -> associated router
+        tensor name. Built by :meth:`from_pretrained`.
     """
 
     def __init__(
@@ -71,7 +80,8 @@ class MagnitudeExpertPruner(Converter):
         expert_indices: dict[str, int],
         is_3d: bool,
         num_experts_per_tok: int | None = None,
-        router_siblings: dict[str, str] | None = None,
+        aux_pattern: str | None = None,
+        aux_to_router: dict[str, str] | None = None,
     ):
         self.router_pattern = re.compile(router_pattern)
         self.expert_pattern = re.compile(expert_pattern)
@@ -82,7 +92,8 @@ class MagnitudeExpertPruner(Converter):
         self.expert_indices = expert_indices
         self.is_3d = is_3d
         self.num_experts_per_tok = num_experts_per_tok
-        self.router_siblings = router_siblings or {}
+        self.aux_pattern = re.compile(aux_pattern) if aux_pattern else None
+        self.aux_to_router = aux_to_router or {}
 
     @classmethod
     def from_pretrained(
@@ -92,6 +103,7 @@ class MagnitudeExpertPruner(Converter):
         expert_pattern: str,
         sparsity: float,
         num_experts_config_key: str | None = None,
+        aux_pattern: str | None = AUX_PATTERN,
     ) -> MagnitudeExpertPruner:
         """
         Build the converter by scanning the checkpoint for router weights,
@@ -103,9 +115,13 @@ class MagnitudeExpertPruner(Converter):
         :param sparsity: fraction of experts to prune per layer, in [0, 1]
         :param num_experts_config_key: config.json key holding the expert count.
             If None, auto-detected from config.json.
+        :param aux_pattern: regex matching per-expert router vectors (e.g.
+            ``mlp.router.bias``) sliced along dim 0 by retained experts.
+            ``None`` disables auxiliary-vector pruning
         """
         router_re = re.compile(router_pattern)
         expert_re = re.compile(expert_pattern)
+        aux_re = re.compile(aux_pattern) if aux_pattern else None
 
         model_files = get_checkpoint_files(model_name_or_path)
         weight_map = get_weight_map(model_files)
@@ -131,9 +147,14 @@ class MagnitudeExpertPruner(Converter):
         # dot-separated prefix
         expert_to_router = build_expert_to_router_map(expert_names, router_names)
 
-        # per-expert tensors next to the router weight (e.g. router bias) must be
-        # pruned with it
-        router_siblings = _find_router_siblings(router_names, weight_map, expert_re)
+        # collect per-expert router vectors (e.g. routing bias) and associate
+        # each with its router by common prefix
+        aux_names = [
+            n
+            for n in weight_map
+            if aux_re and aux_re.search(n) and not router_re.search(n)
+        ]
+        aux_to_router = build_expert_to_router_map(aux_names, router_names)
 
         # detect 2D vs 3D and extract expert indices for 2D
         expert_indices, is_3d = _detect_moe_layout(
@@ -167,7 +188,8 @@ class MagnitudeExpertPruner(Converter):
             expert_indices=expert_indices,
             is_3d=is_3d,
             num_experts_per_tok=num_experts_per_tok,
-            router_siblings=router_siblings,
+            aux_pattern=aux_pattern,
+            aux_to_router=aux_to_router,
         )
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -176,9 +198,14 @@ class MagnitudeExpertPruner(Converter):
         for name in list(tensors):
             tensor = tensors[name]
 
-            if self.router_pattern.search(name) or name in self.router_siblings:
-                router_name = self.router_siblings.get(name, name)
-                retained = self.retained_experts[router_name]
+            if self.router_pattern.search(name):
+                retained = self.retained_experts[name]
+                idx = torch.tensor(retained, dtype=torch.long)
+                result[name] = tensor[idx].contiguous()
+
+            elif self.aux_pattern is not None and self.aux_pattern.search(name):
+                # per-expert vector (e.g. routing bias): slice dim 0 by retained
+                retained = self.retained_experts[self.aux_to_router[name]]
                 idx = torch.tensor(retained, dtype=torch.long)
                 result[name] = tensor[idx].contiguous()
 
@@ -209,6 +236,16 @@ class MagnitudeExpertPruner(Converter):
         k = min(len(v) for v in self.retained_experts.values())
 
         for name, tensor in out.items():
+            if self.aux_pattern is not None and self.aux_pattern.search(name):
+                # per-expert vector must have one entry per retained expert
+                expected = len(self.retained_experts[self.aux_to_router[name]])
+                if tensor.shape[0] != expected:
+                    raise ValueError(
+                        f"{name}: expected {expected} entries after prune, "
+                        f"got {tensor.shape[0]}"
+                    )
+                continue
+
             if not self.expert_pattern.search(name):
                 continue
 
@@ -267,30 +304,6 @@ def _set_nested_key(config_data: dict, key: str, value: int):
     else:
         config_data[key] = value
         logger.info(f"config.json: added {key} = {value}")
-
-
-def _find_router_siblings(
-    router_names: list[str],
-    weight_map: dict[str, str],
-    expert_re: re.Pattern,
-) -> dict[str, str]:
-    """
-    Find tensors that belong to the same module as a router weight, such as
-    ``mlp.router.bias`` or ``mlp.gate.e_score_correction_bias``. These hold one
-    entry per expert, so they are pruned along with the router.
-
-    Returns a mapping of sibling tensor name -> router tensor name.
-    """
-    router_set = set(router_names)
-    module_to_router = {rname.rpartition(".")[0]: rname for rname in router_names}
-    siblings: dict[str, str] = {}
-    for name in weight_map:
-        rname = module_to_router.get(name.rpartition(".")[0])
-        if rname is None or name in router_set or expert_re.search(name):
-            continue
-        siblings[name] = rname
-
-    return siblings
 
 
 def _detect_moe_layout(
